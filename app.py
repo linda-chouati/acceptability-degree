@@ -29,10 +29,26 @@ with st.sidebar:
         edges_text = st.text_area("Attacks R (u v per line)", value="a b\nb a\nc b",
                                   height=96, help="Example: 'a b' means a attacks b.")
 
-        n_samples = st.slider("Number of samples (wᵢ)", 1_000, 100_000, 1_000, step=1_000)
-        epsilon = st.number_input("ε (convergence)", min_value=1e-10, max_value=1e-2,
-                                  value=1e-6, format="%.1e")
-        seed = st.number_input("Random seed", value=0, step=1)
+        # n_samples = st.slider("Number of samples (wᵢ)", 1_000, 100_000, 1_000, step=1_000)
+        n_samples = st.slider(
+            "Number of samples (wᵢ)",
+            1_000, 100_000, 10_000, step=1_000,
+            help="Total number of random weight vectors generated and evaluated. "
+        )
+        epsilon = st.number_input(
+            "ε (convergence)",
+            min_value=1e-10, max_value=1e-2,
+            value=1e-6, format="%.1e",
+            help=(
+                "Contrôle la précision de la convergence du calcul. "
+                "Plus ε est petit → plus la sémantique est précise mais lente à calculer. "
+                "Plus ε est grand → calcul plus rapide mais moins précis.\n\n"
+                "Typiquement, 1e-6 donne un bon compromis."
+            )
+        )
+        seed = st.number_input("Random seed", value=0, step=1, 
+                               help=("Utile pour la reproductibilité des expériences.")
+                               )
         st.divider()
 
         # --- Display options ---
@@ -42,10 +58,11 @@ with st.sidebar:
                 show_points = st.checkbox("Show points", value=True)
             with colB:
                 show_hull = st.checkbox("Show convex hull", value=False)
-
-            subsample = st.slider("Subsample for display", 1_000, 50_000, 10_000, step=1_000,
-                                  help="Max points rendered (computation still uses n_samples).")
-            tol = st.slider("Tolerance for fixed dims (|A|>3)", 0.01, 0.20, 0.05, 0.01)
+            subsample = st.slider(
+                "Subsample for display",
+                1_000, 50_000, 10_000, step=1_000,
+                help="Maximum number of points shown in the plot - visualization only "
+            )
 
             if not show_points:
                 subsample = 0
@@ -93,11 +110,6 @@ if "X" not in st.session_state:
 X = st.session_state.X
 
 # -----------------------
-# Build hull once if needed
-# -----------------------
-hull_global = convex_hull(X) if (show_hull and m >= 2) else None
-
-# -----------------------
 # Visualization
 # -----------------------
 
@@ -113,8 +125,13 @@ if m == 1:
     st.plotly_chart(fig_1d(X_disp[:, 0], A[0]), use_container_width=True)
 
 elif m == 2:
+    pts2d = X_disp[:, :2]     # points réellement affichés => après éventuel subsample
+
+    # calcule la hull sur CES points-là, pas sur X complet
+    hull_disp = convex_hull(pts2d) if show_hull else None
+
     st.plotly_chart(
-        fig_2d(X_disp[:, :2], (A[0], A[1]), hull_global if show_hull else None, show_points=show_points),
+        fig_2d(pts2d, (A[0], A[1]), hull_disp, show_points=show_points),
         use_container_width=True
     )
 
@@ -124,31 +141,57 @@ elif m == 3:
         fig_3d(X_disp[:, :3], (A[0], A[1], A[2]), hull_disp, show_points=show_points),
         use_container_width=True
     )
-
+    
 else:
     cols = st.columns(2)
+
+    # --- choix des 3 axes à afficher ---
     with cols[0]:
         axes = st.multiselect("Choose 3 axes to display", A, max_selections=3)
     if len(axes) != 3:
         st.info("Select exactly 3 axes.")
         st.stop()
+
+    # --- sliders pour chaque argument non affiché ---
     fixed = [a for a in A if a not in axes]
     with cols[1]:
-        st.markdown("**Fix other arguments (± tolerance)**")
+        st.markdown("**Fix other arguments**")
         fixed_vals = {a: st.slider(a, 0.0, 1.0, 0.5, 0.01) for a in fixed}
 
-    mask = np.ones(X.shape[0], dtype=bool)
-    for a in fixed:
-        j = A.index(a)
-        mask &= np.abs(X[:, j] - fixed_vals[a]) <= tol
-
-    Xf = X[mask] if mask.any() else X
+    # --- indices utilitaires ---
     idx_axes = [A.index(a) for a in axes]
-    pts = Xf[:, idx_axes]
+    idx_fixed = [A.index(a) for a in fixed]
 
-    st.caption(f"{len(pts)} points shown after filtering.")
+    if len(idx_fixed) == 0:
+        # cas limite: rien à fixer → simple projection en 3D
+        pts = X[:, idx_axes]
+        caption = f"{len(pts)} points shown (no hidden arguments)."
+    else:
+        # k-NN dans l'espace des dimensions cachées :
+        # on prend les K points les plus proches des valeurs fixées par les sliders
+        V = np.array([fixed_vals[a] for a in fixed], dtype=float)   # (p,)
+        D = X[:, idx_fixed]                                         # (N,p)
+        dist = np.linalg.norm(D - V[None, :], axis=1)               # (N,)
+
+        # Choix de K: assez petit pour que le nuage change réellement,
+        # mais borné par le "subsample" d'affichage si activé.
+        N = len(X)
+        target = (
+            subsample
+            if (show_points and 'subsample' in locals() and subsample and subsample > 0)
+            else 5000
+        )
+        # max 10% de N, min 500, et jamais plus que target
+        K = max(500, min(int(0.10 * N), int(target), N))
+
+        # si target >= N, garde quand même un K < N pour que ça bouge visiblement
+        if target >= N:
+            K = max(500, min(int(0.20 * N), N))
+
+        nn_idx = np.argpartition(dist, K - 1)[:K]                   # indices des K plus proches
+        pts = X[nn_idx][:, idx_axes]
+
     st.plotly_chart(
         fig_3d(pts, tuple(axes), convex_hull(pts) if show_hull else None, show_points=show_points),
         use_container_width=True
     )
-
