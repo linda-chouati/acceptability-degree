@@ -8,7 +8,7 @@ from src.visuals import fig_1d, fig_2d, fig_3d
 
 st.set_page_config(page_title="Acceptability Degree Space", page_icon="-", layout="wide")
 
-# ---- Titre  ----
+# ---- Title  ----
 st.markdown("<h1 style='text-align:center;'>Acceptability Degree Space</h1>", unsafe_allow_html=True)
 
 # -----------------------
@@ -29,7 +29,6 @@ with st.sidebar:
         edges_text = st.text_area("Attacks R (u v per line)", value="a b\nb a\nc b",
                                   height=96, help="Example: 'a b' means a attacks b.")
 
-        # n_samples = st.slider("Number of samples (wᵢ)", 1_000, 100_000, 1_000, step=1_000)
         n_samples = st.slider(
             "Number of samples (wᵢ)",
             1_000, 100_000, 10_000, step=1_000,
@@ -188,7 +187,7 @@ else:
         if target >= N:
             K = max(500, min(int(0.20 * N), N))
 
-        nn_idx = np.argpartition(dist, K - 1)[:K]                   # indices des K plus proches
+        nn_idx = np.argpartition(dist, K - 1)[:K]        # indices des K plus proches
         pts = X[nn_idx][:, idx_axes]
 
     st.plotly_chart(
